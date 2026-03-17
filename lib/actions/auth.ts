@@ -14,8 +14,8 @@ export async function createUser(data: {
 }) {
   const db = getDb();
   
-  // Check if email already exists
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(data.email);
+  // Check if email already exists (case-insensitive)
+  const existing = db.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?)').get(data.email);
   if (existing) {
     return { error: 'Email already exists' };
   }

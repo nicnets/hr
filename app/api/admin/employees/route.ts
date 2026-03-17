@@ -58,8 +58,8 @@ export async function POST(request: Request) {
     const db = getDb();
     const currentYear = new Date().getFullYear();
     
-    // Check if email already exists
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    // Check if email already exists (case-insensitive)
+    const existing = db.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?)').get(email);
     if (existing) {
       return NextResponse.json({ error: 'Email already exists' }, { status: 400 });
     }

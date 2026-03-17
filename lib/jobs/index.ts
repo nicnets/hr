@@ -1,11 +1,23 @@
 import { processAutoClockOut } from './attendance';
 import { processDailyAttendance, processApprovedExceptions, generateDailySummary } from './attendance';
+import { 
+  processRecurringTasks, 
+  processAIAnalysis, 
+  checkAttendanceViolations,
+  getPendingAIAnalysisCount,
+  getRecentAIAnalysis
+} from './tasks';
 
 export {
   processAutoClockOut,
   processDailyAttendance,
   processApprovedExceptions,
   generateDailySummary,
+  processRecurringTasks,
+  processAIAnalysis,
+  checkAttendanceViolations,
+  getPendingAIAnalysisCount,
+  getRecentAIAnalysis,
 };
 
 /**
@@ -26,7 +38,19 @@ export async function runAllJobs() {
   const dailyAttendance = await processDailyAttendance();
   console.log('Daily attendance:', dailyAttendance);
   
-  // 4. Generate summary (11:59 PM)
+  // 4. Process recurring task assignments (04:00 AM)
+  const recurringTasks = await processRecurringTasks();
+  console.log('Recurring tasks assigned:', recurringTasks);
+  
+  // 5. Process AI analysis (11:00 PM)
+  const aiAnalysis = await processAIAnalysis();
+  console.log('AI analysis:', aiAnalysis);
+  
+  // 6. Check attendance violations
+  const violations = await checkAttendanceViolations();
+  console.log('Attendance violations:', violations);
+  
+  // 7. Generate summary (11:59 PM)
   const summary = await generateDailySummary();
   console.log('Daily summary:', summary);
   
@@ -34,6 +58,9 @@ export async function runAllJobs() {
     autoClockOut,
     exceptions,
     dailyAttendance,
+    recurringTasks,
+    aiAnalysis,
+    violations,
     summary,
   };
 }

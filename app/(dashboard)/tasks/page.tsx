@@ -114,15 +114,29 @@ export default function TasksPage() {
         <div>
           <h1 className="text-3xl font-bold">Task Logging</h1>
           <p className="text-muted-foreground">
-            Track your work hours by project
+            Track your work hours by project. For assigned tasks with AI review, use <Link href="/tasks/assigned" className="text-blue-600 hover:underline">My Assigned Tasks</Link>.
           </p>
         </div>
-        <Link href="/tasks/log">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            Log Task
-          </Button>
-        </Link>
+        <div className="flex gap-2">
+          <Link href="/tasks/assigned">
+            <Button variant="outline">
+              <CheckSquare className="mr-2 h-4 w-4" />
+              My Assigned Tasks
+            </Button>
+          </Link>
+          <Link href="/tasks/picker">
+            <Button variant="outline">
+              <Briefcase className="mr-2 h-4 w-4" />
+              Task Picker
+            </Button>
+          </Link>
+          <Link href="/tasks/log">
+            <Button>
+              <Plus className="mr-2 h-4 w-4" />
+              Log Task
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Week Navigation */}

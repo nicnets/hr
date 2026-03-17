@@ -14,10 +14,20 @@ import {
   Clock,
   Plus,
   Building2,
-  ExternalLink
+  ExternalLink,
+  AlertCircle,
+  Send
 } from 'lucide-react';
 import Link from 'next/link';
 import { format, differenceInMinutes } from 'date-fns';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 
 interface Project {
@@ -27,12 +37,27 @@ interface Project {
   is_internal: number;
 }
 
+interface TaskLog {
+  id: number;
+  project_name: string;
+  task_description: string;
+  hours_spent: number;
+  date: string;
+  start_time: string;
+  end_time: string;
+}
+
 export default function LogTaskPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [todayTasks, setTodayTasks] = useState<any[]>([]);
+  const [todayTasks, setTodayTasks] = useState<TaskLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showDetailDialog, setShowDetailDialog] = useState(false);
+  const [lastTaskId, setLastTaskId] = useState<number | null>(null);
+  const [wordCount, setWordCount] = useState(0);
+  const MIN_WORD_COUNT = 40;
+  
   const [formData, setFormData] = useState({
     project_name: '',
     custom_project: '',
@@ -40,6 +65,19 @@ export default function LogTaskPage() {
     start_time: '',
     end_time: '',
     date: format(new Date(), 'yyyy-MM-dd'),
+  });
+
+  // Detailed submission form
+  const [detailForm, setDetailForm] = useState({
+    work_summary: '',
+    task_objective: '',
+    final_outcome: '',
+    scope_change: 'No change' as 'No change' | 'Minor change' | 'Moderate change' | 'Major change',
+    output_type: 'Document / Report',
+    output_description: '',
+    time_spent: '1–2 hours',
+    difficulty_level: 'Moderate' as 'Very Easy' | 'Easy' | 'Moderate' | 'Difficult' | 'Very Difficult',
+    confidence_level: 'Confident' as 'Very confident' | 'Confident' | 'Somewhat confident' | 'Not confident',
   });
 
   useEffect(() => {
@@ -122,16 +160,11 @@ export default function LogTaskPage() {
       });
 
       if (response.ok) {
+        const result = await response.json();
         toast.success(`Task logged: ${hours} hours`);
-        // Reset form
-        setFormData({
-          project_name: '',
-          custom_project: '',
-          task_description: '',
-          start_time: '',
-          end_time: '',
-          date: format(new Date(), 'yyyy-MM-dd'),
-        });
+        setLastTaskId(result.taskId);
+        // Show detail dialog for AI analysis
+        setShowDetailDialog(true);
         fetchTodayTasks();
       } else {
         const error = await response.json();
@@ -151,15 +184,91 @@ export default function LogTaskPage() {
 
   const totalHoursToday = todayTasks.reduce((sum, task) => sum + (task.hours_spent || 0), 0);
 
+  async function handleDetailSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!lastTaskId) return;
+
+    if (wordCount < MIN_WORD_COUNT) {
+      toast.error(`Work summary must be at least ${MIN_WORD_COUNT} words`);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      // Update the task log with AI submission details
+      const response = await fetch('/api/tasks', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: lastTaskId,
+          work_summary: detailForm.work_summary,
+          task_objective: detailForm.task_objective,
+          final_outcome: detailForm.final_outcome,
+          scope_change: detailForm.scope_change,
+          output_type: detailForm.output_type,
+          output_description: detailForm.output_description,
+          difficulty_level: detailForm.difficulty_level,
+          confidence_level: detailForm.confidence_level,
+        }),
+      });
+
+      if (response.ok) {
+        toast.success('Task details submitted for AI analysis');
+        // Reset forms
+        setFormData({
+          project_name: '',
+          custom_project: '',
+          task_description: '',
+          start_time: '',
+          end_time: '',
+          date: format(new Date(), 'yyyy-MM-dd'),
+        });
+        setDetailForm({
+          work_summary: '',
+          task_objective: '',
+          final_outcome: '',
+          scope_change: 'No change',
+          output_type: 'Document / Report',
+          output_description: '',
+          time_spent: '1–2 hours',
+          difficulty_level: 'Moderate',
+          confidence_level: 'Confident',
+        });
+        setWordCount(0);
+        setShowDetailDialog(false);
+        setLastTaskId(null);
+        fetchTodayTasks(); // Refresh to show AI status
+      } else {
+        toast.error('Failed to submit details');
+      }
+    } catch {
+      toast.error('An error occurred');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function handleWorkSummaryChange(value: string) {
+    setDetailForm({ ...detailForm, work_summary: value });
+    setWordCount(value.trim().split(/\s+/).filter(w => w.length > 0).length);
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Link href="/tasks">
-          <Button variant="outline" size="icon">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
-        <h1 className="text-3xl font-bold">Log Task</h1>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Link href="/tasks">
+            <Button variant="outline" size="icon">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+          <div>
+            <h1 className="text-3xl font-bold">Log Task Hours</h1>
+            <p className="text-muted-foreground text-sm">
+              Record time spent on projects. For assigned tasks, go to <Link href="/tasks/assigned" className="text-blue-600 hover:underline">My Assigned Tasks</Link>.
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-3">
@@ -378,6 +487,208 @@ export default function LogTaskPage() {
           </Card>
         </div>
       </div>
+
+      {/* Detail Submission Dialog */}
+      <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Task Details for AI Analysis</DialogTitle>
+            <DialogDescription>
+              Provide detailed information about the work completed. This helps with AI-powered analysis and reporting.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleDetailSubmit}>
+            <div className="space-y-6 py-4">
+              {/* Warning */}
+              <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <AlertCircle className="h-5 w-5 text-red-600 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-red-800">Important: Be Detailed!</p>
+                  <p className="text-sm text-red-700">
+                    Provide as much detail as possible. Vague responses may result in rejection.
+                  </p>
+                </div>
+              </div>
+
+              {/* Work Summary */}
+              <div className="space-y-2">
+                <Label>
+                  Brief Summary of Work Completed * 
+                  <span className={`text-sm ml-2 ${wordCount >= MIN_WORD_COUNT ? 'text-green-600' : 'text-red-600'}`}>
+                    ({wordCount} / {MIN_WORD_COUNT} words min)
+                  </span>
+                </Label>
+                <Textarea
+                  placeholder="Provide a detailed summary (minimum 40 words). Describe specific actions taken, tools used, and progress made..."
+                  value={detailForm.work_summary}
+                  onChange={(e) => handleWorkSummaryChange(e.target.value)}
+                  rows={5}
+                  required
+                />
+              </div>
+
+              {/* Task Objective */}
+              <div className="space-y-2">
+                <Label>What was the main objective of this task? *</Label>
+                <Textarea
+                  placeholder="Describe the main goal or purpose..."
+                  value={detailForm.task_objective}
+                  onChange={(e) => setDetailForm({ ...detailForm, task_objective: e.target.value })}
+                  rows={3}
+                  required
+                />
+              </div>
+
+              {/* Final Outcome */}
+              <div className="space-y-2">
+                <Label>What was the final result or outcome? *</Label>
+                <Textarea
+                  placeholder="Describe the concrete results achieved..."
+                  value={detailForm.final_outcome}
+                  onChange={(e) => setDetailForm({ ...detailForm, final_outcome: e.target.value })}
+                  rows={3}
+                  required
+                />
+              </div>
+
+              {/* Scope Change */}
+              <div className="space-y-2">
+                <Label>Did the scope change during execution? *</Label>
+                <select
+                  value={detailForm.scope_change}
+                  onChange={(e) => setDetailForm({ ...detailForm, scope_change: e.target.value as any })}
+                  className="w-full p-2 border rounded-md"
+                  required
+                >
+                  <option value="No change">No change</option>
+                  <option value="Minor change">Minor change</option>
+                  <option value="Moderate change">Moderate change</option>
+                  <option value="Major change">Major change</option>
+                </select>
+              </div>
+
+              {/* Output Type */}
+              <div className="space-y-2">
+                <Label>What type of output was produced? *</Label>
+                <select
+                  value={detailForm.output_type}
+                  onChange={(e) => setDetailForm({ ...detailForm, output_type: e.target.value })}
+                  className="w-full p-2 border rounded-md"
+                  required
+                >
+                  <option value="Document / Report">Document / Report</option>
+                  <option value="Graphic / Design">Graphic / Design</option>
+                  <option value="Website Update">Website Update</option>
+                  <option value="Code / Script">Code / Script</option>
+                  <option value="Data / Spreadsheet">Data / Spreadsheet</option>
+                  <option value="Presentation">Presentation</option>
+                  <option value="Communication (Email / Message)">Communication (Email / Message)</option>
+                  <option value="Process / Policy Update">Process / Policy Update</option>
+                  <option value="Research Findings">Research Findings</option>
+                  <option value="Article Preparation">Article Preparation</option>
+                  <option value="Course Preparation">Course Preparation</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              {/* Output Description */}
+              <div className="space-y-2">
+                <Label>Describe the final output produced *</Label>
+                <Textarea
+                  placeholder="Provide details about the deliverable..."
+                  value={detailForm.output_description}
+                  onChange={(e) => setDetailForm({ ...detailForm, output_description: e.target.value })}
+                  rows={3}
+                  required
+                />
+              </div>
+
+              {/* Time Spent */}
+              <div className="space-y-2">
+                <Label>Total time spent on the task *</Label>
+                <select
+                  value={detailForm.time_spent}
+                  onChange={(e) => setDetailForm({ ...detailForm, time_spent: e.target.value })}
+                  className="w-full p-2 border rounded-md"
+                  required
+                >
+                  <option value="Less than 30 minutes">Less than 30 minutes</option>
+                  <option value="30 minutes – 1 hour">30 minutes – 1 hour</option>
+                  <option value="1–2 hours">1–2 hours</option>
+                  <option value="2–4 hours">2–4 hours</option>
+                  <option value="4–8 hours">4–8 hours</option>
+                  <option value="1 day">1 day</option>
+                </select>
+              </div>
+
+              {/* Difficulty Level */}
+              <div className="space-y-2">
+                <Label>Estimated difficulty level *</Label>
+                <select
+                  value={detailForm.difficulty_level}
+                  onChange={(e) => setDetailForm({ ...detailForm, difficulty_level: e.target.value as any })}
+                  className="w-full p-2 border rounded-md"
+                  required
+                >
+                  <option value="Very Easy">Very Easy</option>
+                  <option value="Easy">Easy</option>
+                  <option value="Moderate">Moderate</option>
+                  <option value="Difficult">Difficult</option>
+                  <option value="Very Difficult">Very Difficult</option>
+                </select>
+              </div>
+
+              {/* Confidence Level */}
+              <div className="space-y-2">
+                <Label>How confident are you that the task meets required standard? *</Label>
+                <select
+                  value={detailForm.confidence_level}
+                  onChange={(e) => setDetailForm({ ...detailForm, confidence_level: e.target.value as any })}
+                  className="w-full p-2 border rounded-md"
+                  required
+                >
+                  <option value="Very confident">Very confident</option>
+                  <option value="Confident">Confident</option>
+                  <option value="Somewhat confident">Somewhat confident</option>
+                  <option value="Not confident">Not confident</option>
+                </select>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => {
+                setShowDetailDialog(false);
+                // Reset basic form since task was already logged
+                setFormData({
+                  project_name: '',
+                  custom_project: '',
+                  task_description: '',
+                  start_time: '',
+                  end_time: '',
+                  date: format(new Date(), 'yyyy-MM-dd'),
+                });
+              }}>
+                Skip Details
+              </Button>
+              <Button 
+                type="submit" 
+                disabled={isSubmitting || wordCount < MIN_WORD_COUNT}
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Submitting...
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-4 w-4 mr-2" />
+                    Submit for AI Analysis
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

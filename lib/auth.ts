@@ -17,7 +17,7 @@ export const authOptions: NextAuthOptions = {
         }
 
         const db = getDb();
-        const user = db.prepare('SELECT * FROM users WHERE email = ? AND is_active = 1').get(credentials.email) as {
+        const user = db.prepare('SELECT * FROM users WHERE LOWER(email) = LOWER(?) AND is_active = 1').get(credentials.email) as {
           id: number;
           email: string;
           name: string;

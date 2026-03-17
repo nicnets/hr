@@ -42,6 +42,11 @@ export async function GET() {
       SELECT COUNT(*) as count FROM attendance_exceptions WHERE status = 'pending'
     `).get() as { count: number };
     
+    // Pending task reviews
+    const pendingTaskReviews = db.prepare(`
+      SELECT COUNT(*) as count FROM assigned_tasks WHERE status = 'pending_review'
+    `).get() as { count: number };
+    
     // Today's attendance breakdown
     const todayAttendance = db.prepare(`
       SELECT 
@@ -165,6 +170,7 @@ export async function GET() {
         currentlyClockedIn: currentlyClockedIn.count,
         pendingLeaveRequests: pendingLeaveRequests.count,
         pendingExceptions: pendingExceptions.count,
+        pendingTaskReviews: pendingTaskReviews.count,
         todayAttendance: {
           present: todayAttendance?.present || 0,
           late: todayAttendance?.late || 0,

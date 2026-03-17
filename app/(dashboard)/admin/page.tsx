@@ -19,7 +19,8 @@ import {
   Calendar,
   Activity,
   Briefcase,
-  UserCheck
+  UserCheck,
+  CheckSquare
 } from 'lucide-react';
 import Link from 'next/link';
 import {
@@ -42,6 +43,7 @@ interface DashboardData {
     currentlyClockedIn: number;
     pendingLeaveRequests: number;
     pendingExceptions: number;
+    pendingTaskReviews: number;
     todayAttendance: {
       present: number;
       late: number;
@@ -74,6 +76,12 @@ interface DashboardData {
       exception_type: string;
       status: string;
       created_at: string;
+    }[];
+    tasks?: {
+      id: number;
+      title: string;
+      assigned_to_name: string;
+      submitted_at: string;
     }[];
   };
   recentActivity: {
@@ -221,6 +229,19 @@ export default function AdminDashboardPage() {
             </p>
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Pending Task Reviews</CardTitle>
+            <CheckSquare className="h-4 w-4 text-purple-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-purple-600">{stats.pendingTaskReviews || 0}</div>
+            <p className="text-xs text-muted-foreground">
+              Tasks awaiting approval
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Charts Row */}
@@ -309,7 +330,7 @@ export default function AdminDashboardPage() {
                 Pending Approvals
               </CardTitle>
               <CardDescription>
-                {stats.pendingLeaveRequests + stats.pendingExceptions} items need your attention
+                {(stats.pendingLeaveRequests + stats.pendingExceptions + (stats.pendingTaskReviews || 0))} items need your attention
               </CardDescription>
             </div>
             <Link href="/admin/leave-applications">
@@ -353,8 +374,25 @@ export default function AdminDashboardPage() {
                   </Badge>
                 </div>
               ))}
+              
+              {/* Pending Tasks */}
+              {stats.pendingTaskReviews > 0 && (
+                <Link href="/admin/tasks">
+                  <div className="flex items-center justify-between p-3 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors cursor-pointer">
+                    <div>
+                      <p className="font-medium">{stats.pendingTaskReviews} Task{stats.pendingTaskReviews !== 1 ? 's' : ''} Pending Review</p>
+                      <p className="text-sm text-muted-foreground">
+                        Click to view and review submitted tasks
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="bg-purple-100 text-purple-800">
+                      Review
+                    </Badge>
+                  </div>
+                </Link>
+              )}
 
-              {pendingApprovals.leaves.length === 0 && pendingApprovals.exceptions.length === 0 && (
+              {pendingApprovals.leaves.length === 0 && pendingApprovals.exceptions.length === 0 && stats.pendingTaskReviews === 0 && (
                 <div className="text-center text-muted-foreground py-4">
                   <CheckCircle className="h-8 w-8 mx-auto mb-2 text-green-500" />
                   <p>All caught up! No pending approvals.</p>
@@ -488,7 +526,7 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* Quick Links */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-5">
         <Link href="/admin/employees">
           <Card className="hover:bg-slate-50 transition-colors cursor-pointer">
             <CardContent className="p-4 flex items-center gap-3">
@@ -496,6 +534,17 @@ export default function AdminDashboardPage() {
               <div>
                 <p className="font-medium">Manage Employees</p>
                 <p className="text-xs text-muted-foreground">Add, edit, or deactivate</p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/admin/tasks">
+          <Card className="hover:bg-slate-50 transition-colors cursor-pointer">
+            <CardContent className="p-4 flex items-center gap-3">
+              <CheckSquare className="h-5 w-5 text-pink-600" />
+              <div>
+                <p className="font-medium">Task Management</p>
+                <p className="text-xs text-muted-foreground">Assign & review tasks</p>
               </div>
             </CardContent>
           </Card>

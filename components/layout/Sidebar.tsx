@@ -16,6 +16,9 @@ import {
   X,
   Shield,
   Briefcase,
+  Repeat,
+  Hand,
+  Brain,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -40,6 +43,10 @@ const navItems: NavItem[] = [
 const adminNavItems: NavItem[] = [
   { label: 'Admin Dashboard', href: '/admin', icon: <Shield className="h-5 w-5" />, adminOnly: true },
   { label: 'Employees', href: '/admin/employees', icon: <Users className="h-5 w-5" />, adminOnly: true },
+  { label: 'Task Management', href: '/admin/tasks', icon: <CheckSquare className="h-5 w-5" />, adminOnly: true },
+  { label: 'Recurring Templates', href: '/admin/task-templates', icon: <Repeat className="h-5 w-5" />, adminOnly: true },
+  { label: 'Task Picker Pool', href: '/admin/task-picker', icon: <Hand className="h-5 w-5" />, adminOnly: true },
+  { label: 'AI Settings', href: '/admin/ai-settings', icon: <Brain className="h-5 w-5" />, adminOnly: true },
   { label: 'Projects', href: '/admin/projects', icon: <Briefcase className="h-5 w-5" />, adminOnly: true },
   { label: 'Leave Requests', href: '/admin/leave-applications', icon: <FileText className="h-5 w-5" />, adminOnly: true },
   { label: 'Reports', href: '/admin/reports', icon: <FileText className="h-5 w-5" />, adminOnly: true },

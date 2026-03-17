@@ -14,7 +14,15 @@ import {
   Save,
   Upload,
   Image as ImageIcon,
-  Trash2
+  Trash2,
+  Mail,
+  Bell,
+  Shield,
+  Key,
+  RefreshCw,
+  CheckCircle,
+  AlertCircle,
+  ExternalLink
 } from 'lucide-react';
 
 
@@ -27,6 +35,300 @@ interface SystemConfig {
   working_days: string;
   company_name: string;
   logo_url?: string;
+  // Email settings
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_user?: string;
+  smtp_pass?: string;
+  smtp_from?: string;
+  smtp_secure?: boolean;
+  smtp_auth_method?: 'app_password' | 'oauth_google' | 'oauth_microsoft';
+  smtp_oauth_client_id?: string;
+  smtp_oauth_client_secret?: string;
+  smtp_oauth_refresh_token?: string;
+  email_notifications_enabled?: boolean;
+}
+
+// Email Settings Card Component
+function EmailSettingsCard({ 
+  config, 
+  setConfig 
+}: { 
+  config: SystemConfig; 
+  setConfig: (config: SystemConfig) => void;
+}) {
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{success: boolean; message: string} | null>(null);
+
+  const authMethods = [
+    { value: 'app_password', label: 'App Password', icon: Key, description: 'Use app-specific password (Gmail, Outlook, etc.)' },
+    { value: 'oauth_google', label: 'Google OAuth 2.0', icon: Shield, description: 'Authenticate with Google account' },
+    { value: 'oauth_microsoft', label: 'Microsoft OAuth 2.0', icon: Shield, description: 'Authenticate with Microsoft/Outlook account' },
+  ];
+
+  const presetProviders = [
+    { name: 'Gmail (App Password)', host: 'smtp.gmail.com', port: 587, secure: false, authMethod: 'app_password' },
+    { name: 'Gmail (OAuth)', host: 'smtp.gmail.com', port: 587, secure: false, authMethod: 'oauth_google' },
+    { name: 'Microsoft 365 / Outlook', host: 'smtp.office365.com', port: 587, secure: false, authMethod: 'oauth_microsoft' },
+    { name: 'Outlook.com (App Password)', host: 'smtp-mail.outlook.com', port: 587, secure: false, authMethod: 'app_password' },
+    { name: 'Custom SMTP', host: '', port: 587, secure: false, authMethod: 'app_password' },
+  ];
+
+  async function testConnection() {
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const response = await fetch('/api/admin/settings?action=test-email');
+      const result = await response.json();
+      setTestResult(result);
+    } catch (error) {
+      setTestResult({ success: false, message: 'Failed to test connection' });
+    } finally {
+      setIsTesting(false);
+    }
+  }
+
+  const applyPreset = (preset: typeof presetProviders[0]) => {
+    setConfig({
+      ...config,
+      smtp_host: preset.host,
+      smtp_port: preset.port,
+      smtp_secure: preset.secure,
+      smtp_auth_method: preset.authMethod as any,
+    });
+  };
+
+  return (
+    <Card className="md:col-span-2">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Mail className="h-5 w-5" />
+          Email Notification Settings
+        </CardTitle>
+        <CardDescription>
+          Configure email delivery for notifications using App Password or OAuth
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* Enable Toggle */}
+        <div className="flex items-center justify-between p-4 border rounded-lg">
+          <div className="flex items-center gap-3">
+            <Bell className="h-5 w-5 text-muted-foreground" />
+            <div>
+              <p className="font-medium">Enable Email Notifications</p>
+              <p className="text-sm text-muted-foreground">
+                Send notifications for task assignments, AI analysis results, and attendance alerts
+              </p>
+            </div>
+          </div>
+          <input
+            type="checkbox"
+            checked={config.email_notifications_enabled}
+            onChange={(e) => setConfig({ ...config, email_notifications_enabled: e.target.checked })}
+            className="h-5 w-5 rounded border-gray-300"
+          />
+        </div>
+
+        {config.email_notifications_enabled && (
+          <>
+            {/* Quick Presets */}
+            <div className="space-y-2">
+              <Label>Quick Setup Presets</Label>
+              <div className="flex flex-wrap gap-2">
+                {presetProviders.map((preset) => (
+                  <Button
+                    key={preset.name}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyPreset(preset)}
+                  >
+                    {preset.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            {/* Auth Method Selection */}
+            <div className="space-y-3">
+              <Label>Authentication Method</Label>
+              <div className="grid gap-3 md:grid-cols-3">
+                {authMethods.map((method) => {
+                  const Icon = method.icon;
+                  return (
+                    <button
+                      key={method.value}
+                      type="button"
+                      onClick={() => setConfig({ ...config, smtp_auth_method: method.value as any })}
+                      className={`p-4 border rounded-lg text-left transition-colors ${
+                        config.smtp_auth_method === method.value
+                          ? 'border-blue-500 bg-blue-50'
+                          : 'border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-2">
+                        <Icon className="h-4 w-4" />
+                        <span className="font-medium">{method.label}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">{method.description}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* SMTP Settings */}
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="smtp_host">SMTP Host</Label>
+                <Input
+                  id="smtp_host"
+                  placeholder="smtp.gmail.com"
+                  value={config.smtp_host || ''}
+                  onChange={(e) => setConfig({ ...config, smtp_host: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="smtp_port">SMTP Port</Label>
+                <Input
+                  id="smtp_port"
+                  type="number"
+                  placeholder="587"
+                  value={config.smtp_port || ''}
+                  onChange={(e) => setConfig({ ...config, smtp_port: parseInt(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="smtp_user">Email Address / Username</Label>
+                <Input
+                  id="smtp_user"
+                  placeholder="email@example.com"
+                  value={config.smtp_user || ''}
+                  onChange={(e) => setConfig({ ...config, smtp_user: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="smtp_from">From Display Name</Label>
+                <Input
+                  id="smtp_from"
+                  placeholder="HR Portal"
+                  value={config.smtp_from || ''}
+                  onChange={(e) => setConfig({ ...config, smtp_from: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Sender name displayed in emails
+                </p>
+              </div>
+            </div>
+
+            {/* App Password Section */}
+            {config.smtp_auth_method === 'app_password' && (
+              <div className="space-y-4 p-4 bg-slate-50 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <Key className="h-4 w-4" />
+                  <Label className="font-medium">App Password</Label>
+                </div>
+                <div className="space-y-2">
+                  <Input
+                    type="password"
+                    placeholder="Enter app password"
+                    value={config.smtp_pass || ''}
+                    onChange={(e) => setConfig({ ...config, smtp_pass: e.target.value })}
+                  />
+                  <div className="text-sm text-muted-foreground space-y-1">
+                    <p><strong>For Gmail:</strong> Use an <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">App Password <ExternalLink className="h-3 w-3" /></a> (not your regular password)</p>
+                    <p><strong>For Microsoft/Outlook:</strong> Use an <a href="https://account.microsoft.com/security" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">App Password <ExternalLink className="h-3 w-3" /></a> or enable SMTP AUTH</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* OAuth Section */}
+            {(config.smtp_auth_method === 'oauth_google' || config.smtp_auth_method === 'oauth_microsoft') && (
+              <div className="space-y-4 p-4 bg-slate-50 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <Shield className="h-4 w-4" />
+                  <Label className="font-medium">OAuth 2.0 Credentials</Label>
+                </div>
+                <div className="grid gap-4">
+                  <div className="space-y-2">
+                    <Label>Client ID</Label>
+                    <Input
+                      placeholder="OAuth Client ID"
+                      value={config.smtp_oauth_client_id || ''}
+                      onChange={(e) => setConfig({ ...config, smtp_oauth_client_id: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Client Secret</Label>
+                    <Input
+                      type="password"
+                      placeholder="OAuth Client Secret"
+                      value={config.smtp_oauth_client_secret || ''}
+                      onChange={(e) => setConfig({ ...config, smtp_oauth_client_secret: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Refresh Token</Label>
+                    <Input
+                      type="password"
+                      placeholder="OAuth Refresh Token"
+                      value={config.smtp_oauth_refresh_token || ''}
+                      onChange={(e) => setConfig({ ...config, smtp_oauth_refresh_token: e.target.value })}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      {config.smtp_auth_method === 'oauth_google' ? (
+                        <>Get credentials from <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">Google Cloud Console <ExternalLink className="h-3 w-3" /></a></>
+                      ) : (
+                        <>Get credentials from <a href="https://portal.azure.com/" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">Azure Portal <ExternalLink className="h-3 w-3" /></a></>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Test Connection */}
+            <div className="flex items-center gap-4 p-4 border rounded-lg">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={testConnection}
+                disabled={isTesting}
+              >
+                {isTesting ? (
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Mail className="h-4 w-4 mr-2" />
+                )}
+                Test Connection
+              </Button>
+              {testResult && (
+                <div className={`flex items-center gap-2 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
+                  {testResult.success ? (
+                    <CheckCircle className="h-5 w-5" />
+                  ) : (
+                    <AlertCircle className="h-5 w-5" />
+                  )}
+                  <span className="text-sm">{testResult.message}</span>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <p className="text-sm text-blue-800 font-medium">Notification Types</p>
+          <ul className="text-sm text-blue-700 mt-2 space-y-1">
+            <li>• Task assignment notifications</li>
+            <li>• AI analysis results (approved/rejected/needs review)</li>
+            <li>• Attendance violation warnings</li>
+            <li>• Leave request status updates</li>
+          </ul>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function SettingsPage() {
@@ -361,6 +663,9 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Email Notification Settings */}
+        <EmailSettingsCard config={config} setConfig={setConfig} />
       </div>
     </div>
   );

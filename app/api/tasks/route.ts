@@ -17,6 +17,7 @@ export async function GET(request: NextRequest) {
     const date = searchParams.get('date');
     const start = searchParams.get('start');
     const end = searchParams.get('end');
+    const includeAiAnalysis = searchParams.get('include_ai') === 'true';
     
     const db = getDb();
     
@@ -87,6 +88,66 @@ export async function POST(request: Request) {
     });
   } catch (error: any) {
     console.error('Create task error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error', details: error?.message || String(error) },
+      { status: 500 }
+    );
+  }
+}
+
+// PUT /api/tasks - Update task with AI submission details
+export async function PUT(request: Request) {
+  try {
+    const session = await getServerSession(authOptions);
+    
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    const userId = parseInt(session.user.id);
+    const body = await request.json();
+    const { taskId, ...details } = body;
+    
+    if (!taskId) {
+      return NextResponse.json({ error: 'Task ID required' }, { status: 400 });
+    }
+    
+    const db = getDb();
+    
+    // Verify the task belongs to this user
+    const task = db.prepare('SELECT * FROM task_logs WHERE id = ? AND user_id = ?').get(taskId, userId);
+    if (!task) {
+      return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+    }
+    
+    // Update with AI submission details
+    db.prepare(`
+      UPDATE task_logs
+      SET work_summary = ?,
+          task_objective = ?,
+          final_outcome = ?,
+          scope_change = ?,
+          output_type = ?,
+          output_description = ?,
+          difficulty_level = ?,
+          confidence_level = ?,
+          ai_analyzed = 0
+      WHERE id = ?
+    `).run(
+      details.work_summary,
+      details.task_objective,
+      details.final_outcome,
+      details.scope_change,
+      details.output_type,
+      details.output_description,
+      details.difficulty_level,
+      details.confidence_level,
+      taskId
+    );
+    
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error('Update task error:', error);
     return NextResponse.json(
       { error: 'Internal server error', details: error?.message || String(error) },
       { status: 500 }

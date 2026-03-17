@@ -8,33 +8,196 @@ interface EmailOptions {
   text?: string;
 }
 
-// Create transporter
-function createTransport() {
-  const host = process.env.SMTP_HOST;
-  const port = parseInt(process.env.SMTP_PORT || '587');
-  const secure = process.env.SMTP_SECURE === 'true';
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+interface EmailConfig {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_user: string;
+  smtp_pass: string | null;
+  smtp_from: string;
+  smtp_auth_method: 'app_password' | 'oauth_google' | 'oauth_microsoft';
+  smtp_oauth_client_id: string | null;
+  smtp_oauth_client_secret: string | null;
+  smtp_oauth_refresh_token: string | null;
+  smtp_oauth_access_token: string | null;
+  smtp_oauth_token_expiry: string | null;
+  smtp_secure: number;
+  email_notifications_enabled: number;
+}
+
+// Get email config from database
+function getEmailConfig(): EmailConfig | null {
+  try {
+    const db = getDb();
+    const config = db.prepare('SELECT * FROM system_config WHERE id = 1').get() as EmailConfig | undefined;
+    
+    if (!config || !config.email_notifications_enabled) {
+      return null;
+    }
+    
+    return config;
+  } catch (error) {
+    console.error('Failed to get email config:', error);
+    return null;
+  }
+}
+
+// Refresh OAuth token for Microsoft
+async function refreshMicrosoftToken(config: EmailConfig): Promise<string | null> {
+  try {
+    const response = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: config.smtp_oauth_client_id || '',
+        client_secret: config.smtp_oauth_client_secret || '',
+        refresh_token: config.smtp_oauth_refresh_token || '',
+        grant_type: 'refresh_token',
+        scope: 'https://outlook.office365.com/SMTP.Send offline_access',
+      }),
+    });
+    
+    const data = await response.json();
+    
+    if (data.access_token) {
+      // Update the access token in database
+      const db = getDb();
+      const expiryDate = new Date(Date.now() + data.expires_in * 1000).toISOString();
+      db.prepare(`
+        UPDATE system_config 
+        SET smtp_oauth_access_token = ?, 
+            smtp_oauth_token_expiry = ?
+        WHERE id = 1
+      `).run(data.access_token, expiryDate);
+      
+      return data.access_token;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Failed to refresh Microsoft token:', error);
+    return null;
+  }
+}
+
+// Refresh OAuth token for Google
+async function refreshGoogleToken(config: EmailConfig): Promise<string | null> {
+  try {
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: config.smtp_oauth_client_id || '',
+        client_secret: config.smtp_oauth_client_secret || '',
+        refresh_token: config.smtp_oauth_refresh_token || '',
+        grant_type: 'refresh_token',
+      }),
+    });
+    
+    const data = await response.json();
+    
+    if (data.access_token) {
+      // Update the access token in database
+      const db = getDb();
+      const expiryDate = new Date(Date.now() + data.expires_in * 1000).toISOString();
+      db.prepare(`
+        UPDATE system_config 
+        SET smtp_oauth_access_token = ?, 
+            smtp_oauth_token_expiry = ?
+        WHERE id = 1
+      `).run(data.access_token, expiryDate);
+      
+      return data.access_token;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Failed to refresh Google token:', error);
+    return null;
+  }
+}
+
+// Get valid access token (refresh if needed)
+async function getValidAccessToken(config: EmailConfig): Promise<string | null> {
+  // Check if current token is still valid (with 5 min buffer)
+  if (config.smtp_oauth_access_token && config.smtp_oauth_token_expiry) {
+    const expiry = new Date(config.smtp_oauth_token_expiry);
+    if (expiry > new Date(Date.now() + 5 * 60 * 1000)) {
+      return config.smtp_oauth_access_token;
+    }
+  }
   
-  if (!host || !user || !pass) {
-    console.warn('Email configuration missing. Email notifications will be logged only.');
+  // Token expired or about to expire, refresh it
+  if (config.smtp_auth_method === 'oauth_microsoft') {
+    return refreshMicrosoftToken(config);
+  } else if (config.smtp_auth_method === 'oauth_google') {
+    return refreshGoogleToken(config);
+  }
+  
+  return null;
+}
+
+// Create transporter based on auth method
+async function createTransport() {
+  const config = getEmailConfig();
+  
+  if (!config) {
+    console.warn('Email configuration missing or disabled. Email notifications will be logged only.');
     return null;
   }
   
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: {
-      user,
-      pass,
-    },
-  });
+  const { smtp_host, smtp_port, smtp_user, smtp_from, smtp_secure, smtp_auth_method } = config;
+  
+  if (!smtp_host || !smtp_user) {
+    console.warn('SMTP host or user not configured.');
+    return null;
+  }
+  
+  // App Password Authentication
+  if (smtp_auth_method === 'app_password') {
+    if (!config.smtp_pass) {
+      console.warn('SMTP password not configured for app password authentication.');
+      return null;
+    }
+    
+    return nodemailer.createTransport({
+      host: smtp_host,
+      port: smtp_port,
+      secure: smtp_secure === 1,
+      auth: {
+        user: smtp_user,
+        pass: config.smtp_pass,
+      },
+    });
+  }
+  
+  // OAuth Authentication (Google or Microsoft)
+  if (smtp_auth_method === 'oauth_google' || smtp_auth_method === 'oauth_microsoft') {
+    const accessToken = await getValidAccessToken(config);
+    
+    if (!accessToken) {
+      console.warn('Failed to get valid OAuth access token.');
+      return null;
+    }
+    
+    return nodemailer.createTransport({
+      host: smtp_host,
+      port: smtp_port,
+      secure: smtp_secure === 1,
+      auth: {
+        user: smtp_user,
+        accessToken: accessToken,
+      },
+    });
+  }
+  
+  return null;
 }
 
+// Send email
 export async function sendEmail({ to, subject, html, text }: EmailOptions): Promise<boolean> {
-  const transporter = createTransport();
-  const from = process.env.SMTP_FROM || 'hr@forcefriction.ai';
+  const config = getEmailConfig();
+  const transporter = await createTransport();
+  const from = config?.smtp_from || 'hr@forcefriction.ai';
   const companyName = process.env.COMPANY_NAME || 'ForceFriction AI';
   
   try {
@@ -58,6 +221,92 @@ export async function sendEmail({ to, subject, html, text }: EmailOptions): Prom
     console.error('Email send failed:', error);
     return false;
   }
+}
+
+// Test email connection
+export async function testEmailConnection(): Promise<{ success: boolean; message: string }> {
+  const config = getEmailConfig();
+  
+  if (!config) {
+    return { success: false, message: 'Email notifications are disabled or not configured.' };
+  }
+  
+  const { smtp_host, smtp_port, smtp_user, smtp_auth_method } = config;
+  
+  if (!smtp_host || !smtp_user) {
+    return { success: false, message: 'SMTP host and user are required.' };
+  }
+  
+  // Check auth-specific requirements
+  if (smtp_auth_method === 'app_password' && !config.smtp_pass) {
+    return { success: false, message: 'SMTP password is required for App Password authentication.' };
+  }
+  
+  if ((smtp_auth_method === 'oauth_google' || smtp_auth_method === 'oauth_microsoft')) {
+    if (!config.smtp_oauth_client_id || !config.smtp_oauth_client_secret) {
+      return { success: false, message: 'OAuth Client ID and Client Secret are required.' };
+    }
+    if (!config.smtp_oauth_refresh_token) {
+      return { success: false, message: 'OAuth Refresh Token is required.' };
+    }
+  }
+  
+  try {
+    const transporter = await createTransport();
+    
+    if (!transporter) {
+      return { success: false, message: 'Failed to create email transport. Check your configuration.' };
+    }
+    
+    // Verify connection
+    await transporter.verify();
+    
+    return { success: true, message: `Connection successful! Using ${smtp_auth_method} authentication with ${smtp_host}:${smtp_port}` };
+  } catch (error: any) {
+    console.error('Email test connection failed:', error);
+    
+    let errorMessage = error.message || 'Connection failed.';
+    
+    // Provide helpful error messages for common issues
+    if (error.code === 'EAUTH') {
+      if (smtp_auth_method === 'app_password') {
+        errorMessage = 'Authentication failed. For Gmail, use an App Password instead of your regular password. For Microsoft, use an App Password or enable SMTP AUTH.';
+      } else {
+        errorMessage = 'OAuth authentication failed. The refresh token may be expired or invalid. Please re-authenticate.';
+      }
+    } else if (error.code === 'ECONNECTION') {
+      errorMessage = `Could not connect to ${smtp_host}:${smtp_port}. Check your host and port settings.`;
+    } else if (error.code === 'ESOCKET') {
+      errorMessage = 'Socket error. Check if the SMTP server is accessible from your network.';
+    }
+    
+    return { success: false, message: errorMessage };
+  }
+}
+
+// Get email configuration for display (without sensitive data)
+export function getEmailSettings() {
+  const config = getEmailConfig();
+  
+  if (!config) {
+    return null;
+  }
+  
+  return {
+    smtp_host: config.smtp_host,
+    smtp_port: config.smtp_port,
+    smtp_user: config.smtp_user,
+    smtp_from: config.smtp_from,
+    smtp_auth_method: config.smtp_auth_method,
+    smtp_secure: config.smtp_secure,
+    email_notifications_enabled: config.email_notifications_enabled,
+    // Mask sensitive OAuth fields
+    has_oauth_client_id: !!config.smtp_oauth_client_id,
+    has_oauth_client_secret: !!config.smtp_oauth_client_secret,
+    has_oauth_refresh_token: !!config.smtp_oauth_refresh_token,
+    has_oauth_access_token: !!config.smtp_oauth_access_token,
+    oauth_token_expiry: config.smtp_oauth_token_expiry,
+  };
 }
 
 // Email Templates

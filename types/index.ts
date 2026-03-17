@@ -151,3 +151,143 @@ export interface Project {
   created_at: string;
   updated_at: string;
 }
+
+// Task recurrence types
+export type RecurrenceType = 'daily' | 'weekly' | 'monthly' | 'adhoc';
+
+// Recurring task template
+export interface RecurringTaskTemplate {
+  id: number;
+  title: string;
+  description: string;
+  recurrence_type: 'daily' | 'weekly' | 'monthly';
+  due_time: string | null; // HH:MM format for daily tasks
+  due_day: number | null; // 0-6 for weekly, 1-31 for monthly
+  project_id: number | null;
+  assigned_to: number | null;
+  is_active: boolean;
+  last_assigned_date: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Task picker pool item
+export interface TaskPickerPool {
+  id: number;
+  title: string;
+  description: string;
+  project_id: number | null;
+  estimated_hours: number | null;
+  difficulty_level: 'Very Easy' | 'Easy' | 'Moderate' | 'Difficult' | 'Very Difficult' | null;
+  required_skills: string | null; // JSON array
+  is_active: boolean;
+  picked_by: number | null;
+  picked_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  project_name?: string;
+  picker_name?: string;
+}
+
+// Task submission details (employee responses)
+export interface TaskSubmission {
+  id: number;
+  task_id: number;
+  user_id: number;
+  work_summary: string;
+  task_objective: string;
+  final_outcome: string;
+  scope_change: 'No change' | 'Minor change' | 'Moderate change' | 'Major change';
+  output_type: 'Document / Report' | 'Graphic / Design' | 'Website Update' | 'Code / Script' | 'Data / Spreadsheet' | 'Presentation' | 'Communication (Email / Message)' | 'Process / Policy Update' | 'Research Findings' | 'Article Preparation' | 'Course Preparation' | 'Other';
+  output_description: string;
+  time_spent: 'Less than 30 minutes' | '30 minutes – 1 hour' | '1–2 hours' | '2–4 hours' | '4–8 hours' | '1 day';
+  difficulty_level: 'Very Easy' | 'Easy' | 'Moderate' | 'Difficult' | 'Very Difficult';
+  confidence_level: 'Very confident' | 'Confident' | 'Somewhat confident' | 'Not confident';
+  submitted_at: string;
+}
+
+// AI Analysis result
+export interface TaskAIAnalysis {
+  id: number;
+  task_id: number;
+  submission_id: number;
+  user_id: number;
+  score: number;
+  task_understanding: number;
+  work_authenticity: number;
+  output_validity: number;
+  effort_reasonableness: number;
+  difficulty_consistency: number;
+  risk_flags: string | null; // JSON array
+  decision: 'approved' | 'needs_review' | 'rejected';
+  analysis_summary: string | null;
+  analyzed_at: string;
+  notification_sent: boolean;
+}
+
+// AI Configuration
+export interface AIConfig {
+  id: number;
+  api_key: string | null;
+  model_name: string;
+  is_enabled: boolean;
+  test_status: string | null;
+  test_message: string | null;
+  updated_at: string;
+}
+
+// Extended assigned task with new fields
+export interface AssignedTask {
+  id: number;
+  title: string;
+  description: string;
+  assigned_to: number;
+  assigned_by: number;
+  due_date: string | null;
+  status: 'assigned' | 'in_progress' | 'pending_review' | 'closed' | 'rejected';
+  evidence_type: 'link' | 'attachment' | 'none';
+  evidence_url: string | null;
+  evidence_description: string | null;
+  submitted_at: string | null;
+  reviewed_by: number | null;
+  reviewed_at: string | null;
+  review_notes: string | null;
+  auto_approve: boolean;
+  recurrence_type: RecurrenceType;
+  parent_template_id: number | null;
+  project_id: number | null;
+  created_at: string;
+  updated_at: string;
+  // Join fields
+  assigned_to_name?: string;
+  assigned_to_email?: string;
+  assigned_by_name?: string;
+  reviewed_by_name?: string;
+  project_name?: string;
+  submission?: TaskSubmission;
+  ai_analysis?: TaskAIAnalysis;
+}
+
+// Attendance violation tracking
+export interface AttendanceViolation {
+  id: number;
+  user_id: number;
+  date: string;
+  violation_type: 'no_task_submitted' | 'task_rejected' | 'hours_mismatch';
+  email_count: number;
+  leave_deducted: boolean;
+  deduction_hours: number;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+// Task clock-in link
+export interface TaskClockinLink {
+  id: number;
+  task_id: number | null;
+  task_log_id: number | null;
+  user_id: number;
+  date: string;
+  attendance_id: number | null;
+  created_at: string;
+}
