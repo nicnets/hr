@@ -118,9 +118,7 @@ function LoginCard() {
           <LoginForm />
         </Suspense>
       </CardContent>
-      <CardFooter className="flex flex-col space-y-2 text-sm text-muted-foreground text-center">
-        <p>Default admin: admin@forcefriction.ai / admin123</p>
-      </CardFooter>
+      <CardFooter className="flex flex-col space-y-2 text-sm text-muted-foreground text-center" />
     </Card>
   );
 }
