@@ -43,23 +43,30 @@ Click **"Create the stack"**
 
 ---
 
-## Step 2: Configure Environment Variables
+## Step 2: Configure Environment Variables (Minimal Required)
 
 After the stack is created, go to **Stacks** → **hr-portal** → **Editor** tab
 
-Add these environment variables in the **Environment variables** section:
+Add **only these 2 required variables** in the **Environment variables** section:
 
 ```
-NEXTAUTH_URL=http://your-server-ip:3000          # Change to your domain if using reverse proxy
-NEXTAUTH_SECRET=your-secret-key-here             # Generate: openssl rand -base64 32
-SMTP_HOST=smtp.gmail.com                         # Your SMTP server
-SMTP_PORT=587                                    # SMTP port
-SMTP_USER=your-email@gmail.com                   # SMTP username
-SMTP_PASS=your-app-password                      # SMTP password
-SMTP_FROM=your-email@gmail.com                   # From email address
-CRON_SECRET=your-cron-secret-here                # Generate: openssl rand -base64 32
-COMPANY_NAME=Your Company Name                   # Your company name
+NEXTAUTH_URL=http://your-server-ip:3000
+NEXTAUTH_SECRET=your-secret-key-here
 ```
+
+**Generate a secret:**
+```bash
+openssl rand -base64 32
+```
+
+**Optional variables:**
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `COMPANY_NAME` | Company name in emails | "ForceFriction AI" |
+| `CRON_SECRET` | Secure cron job endpoints | *(none - endpoints are open)* |
+
+> **Note:** SMTP settings are configured via the Admin UI (Settings → Email), not environment variables.
 
 **Click "Update the stack"** to apply
 
