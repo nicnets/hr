@@ -2,10 +2,36 @@
 
 import { getDb } from '@/lib/db';
 import { format, parseISO, setHours, setMinutes } from 'date-fns';
+import { sendEmail, logEmail } from '@/lib/email';
+
+// Shift timing constants
+const SHIFT_END_HOUR = 22; // 10 PM
+const MINIMUM_WORK_HOURS = 8;
+
+interface SystemConfig {
+  min_work_hours: number;
+  half_day_threshold: number;
+  shift_start_time: string;
+}
+
+interface AttendanceRecord {
+  id: number;
+  user_id: number;
+  date: string;
+  clock_in: string | null;
+  clock_out: string | null;
+  total_hours: number | null;
+  status: string;
+}
+
+interface LeaveBalance {
+  id: number;
+  remaining_leaves: number;
+}
 
 /**
  * Auto clock-out users who haven't clocked out by the configured time
- * This should run at the auto_clockout_time (default: 6:05 PM)
+ * This should run at the auto_clockout_time (default: 10:00 PM)
  */
 export async function processAutoClockOut() {
   const db = getDb();
@@ -41,7 +67,7 @@ export async function processAutoClockOut() {
     const hoursWorked = (clockOutTime.getTime() - clockIn.getTime()) / (1000 * 60 * 60);
     
     // Determine status
-    let status = 'present';
+    let status = 'auto_clockout';
     if (hoursWorked < config.half_day_threshold) {
       status = 'unaccounted';
     } else if (hoursWorked < config.min_work_hours) {
@@ -51,7 +77,7 @@ export async function processAutoClockOut() {
     // Update attendance record
     db.prepare(`
       UPDATE attendance 
-      SET clock_out = ?, status = ?, is_auto_clockout = 1
+      SET clock_out = ?, status = ?, is_auto_clockout = 1, is_final_session = 1
       WHERE id = ?
     `).run(clockOutTime.toISOString(), status, attendance.id);
     
@@ -65,30 +91,49 @@ export async function processAutoClockOut() {
       attendance.user_id,
       `You were automatically clocked out at ${config.auto_clockout_time}. Hours worked: ${hoursWorked.toFixed(1)}`
     );
+    
+    // Send email notification about auto clock-out
+    try {
+      if (attendance.email) {
+        const emailSent = await sendEmail({
+          to: attendance.email,
+          subject: 'Auto Clock-out Notification',
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #dc3545;">Auto Clock-out</h2>
+              <p>Hi ${attendance.name},</p>
+              <p>You were automatically clocked out at <strong>${config.auto_clockout_time}</strong> as you did not manually clock out.</p>
+              
+              <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+                <p><strong>Date:</strong> ${today}</p>
+                <p><strong>Clock In:</strong> ${format(clockIn, 'HH:mm')}</p>
+                <p><strong>Auto Clock Out:</strong> ${config.auto_clockout_time}</p>
+                <p><strong>Hours Worked:</strong> ${hoursWorked.toFixed(1)} hours</p>
+              </div>
+              
+              <p>Please remember to clock out manually in the future to ensure accurate time tracking.</p>
+              
+              <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+              <p style="color: #999; font-size: 12px;">
+                This is an automated notification from ForceFriction AI HR Portal.
+              </p>
+            </div>
+          `,
+        });
+        
+        await logEmail(
+          attendance.user_id,
+          'auto_clockout',
+          'Auto Clock-out Notification',
+          emailSent ? 'sent' : 'failed'
+        );
+      }
+    } catch (emailError) {
+      console.error('Failed to send auto clock-out email:', emailError);
+    }
   }
   
   return { processed: activeAttendances.length };
-}
-
-interface SystemConfig {
-  min_work_hours: number;
-  half_day_threshold: number;
-  shift_start_time: string;
-}
-
-interface AttendanceRecord {
-  id: number;
-  user_id: number;
-  date: string;
-  clock_in: string | null;
-  clock_out: string | null;
-  total_hours: number | null;
-  status: string;
-}
-
-interface LeaveBalance {
-  id: number;
-  remaining_leaves: number;
 }
 
 /**
@@ -125,61 +170,122 @@ export async function processDailyAttendance() {
   };
   
   for (const user of users) {
-    // Get attendance record for today
-    const attendance = db.prepare('SELECT * FROM attendance WHERE user_id = ? AND date = ?')
-      .get(user.id, today) as AttendanceRecord | undefined;
+    // Get all attendance sessions for today
+    const sessions = db.prepare(`
+      SELECT * FROM attendance 
+      WHERE user_id = ? AND date = ?
+    `).all(user.id, today) as AttendanceRecord[];
+    
+    // Calculate total hours from all sessions
+    const totalHours = sessions.reduce((sum, s) => sum + (s.total_hours || 0), 0);
     
     let finalStatus: string;
     let deduction = 0;
     let isLop = false;
+    let hasActiveSession = false;
     
-    if (!attendance || !attendance.clock_in) {
+    // Check if there's an active session (shouldn't happen after auto clock-out)
+    hasActiveSession = sessions.some(s => s.clock_in && !s.clock_out);
+    
+    if (sessions.length === 0 || !sessions.some(s => s.clock_in)) {
       // User didn't clock in at all
       finalStatus = 'unaccounted';
       deduction = 1.0;
       
       // Create attendance record if it doesn't exist
-      if (!attendance) {
-        db.prepare('INSERT INTO attendance (user_id, date, status) VALUES (?, ?, ?)')
-          .run(user.id, today, 'unaccounted');
-      } else {
-        db.prepare('UPDATE attendance SET status = ? WHERE id = ?')
-          .run('unaccounted', attendance.id);
-      }
+      db.prepare('INSERT INTO attendance (user_id, date, status) VALUES (?, ?, ?)')
+        .run(user.id, today, 'unaccounted');
       
-    } else if (!attendance.clock_out) {
+    } else if (hasActiveSession) {
       // User clocked in but didn't clock out - auto clock-out should have handled this
       // But if it didn't, mark as unaccounted
       finalStatus = 'unaccounted';
       deduction = 1.0;
       
-      db.prepare('UPDATE attendance SET status = ? WHERE id = ?')
-        .run('unaccounted', attendance.id);
+      // Update active session
+      const activeSession = sessions.find(s => s.clock_in && !s.clock_out);
+      if (activeSession) {
+        db.prepare('UPDATE attendance SET status = ? WHERE id = ?')
+          .run('unaccounted', activeSession.id);
+      }
         
     } else {
-      // User has both clock in and out
-      const hoursWorked = attendance.total_hours || 0;
+      // User has clocked in and out (all sessions closed)
       
-      if (hoursWorked < config.half_day_threshold) {
+      if (totalHours < config.half_day_threshold) {
         // Less than half day threshold (default 4 hours)
         finalStatus = 'unaccounted';
         deduction = 1.0;
         
-        db.prepare('UPDATE attendance SET status = ? WHERE id = ?')
-          .run('unaccounted', attendance.id);
+        // Update all sessions
+        sessions.forEach(s => {
+          db.prepare('UPDATE attendance SET status = ? WHERE id = ?')
+            .run('unaccounted', s.id);
+        });
           
-      } else if (hoursWorked < config.min_work_hours) {
+      } else if (totalHours < config.min_work_hours) {
         // Between half day and full day (default 4-8 hours)
         finalStatus = 'half_day';
         deduction = 0.5;
         
-        db.prepare('UPDATE attendance SET status = ? WHERE id = ?')
-          .run('half_day', attendance.id);
+        // Update all sessions
+        sessions.forEach(s => {
+          if (s.status !== 'late' && s.status !== 'auto_clockout') {
+            db.prepare('UPDATE attendance SET status = ? WHERE id = ?')
+              .run('half_day', s.id);
+          }
+        });
+        
+        // Send email for not meeting minimum hours
+        try {
+          if (user.email) {
+            const emailSent = await sendEmail({
+              to: user.email,
+              subject: 'Attendance Notice: Partial Day Worked',
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <h2 style="color: #ffc107;">Attendance Notice</h2>
+                  <p>Hi ${user.name},</p>
+                  <p>You worked a partial day today.</p>
+                  
+                  <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+                    <p><strong>Date:</strong> ${today}</p>
+                    <p><strong>Total Hours:</strong> ${totalHours.toFixed(1)} hours</p>
+                    <p><strong>Status:</strong> Half Day</p>
+                    <p><strong>Leave Deduction:</strong> 0.5 day</p>
+                  </div>
+                  
+                  <p>Minimum ${config.min_work_hours} hours are required for a full day.</p>
+                  
+                  <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+                  <p style="color: #999; font-size: 12px;">
+                    This is an automated notification from ForceFriction AI HR Portal.
+                  </p>
+                </div>
+              `,
+            });
+            
+            await logEmail(
+              user.id,
+              'half_day_notice',
+              'Attendance Notice: Partial Day Worked',
+              emailSent ? 'sent' : 'failed'
+            );
+          }
+        } catch (emailError) {
+          console.error('Failed to send half-day notice email:', emailError);
+        }
           
       } else {
         // Full day worked
-        finalStatus = attendance.status === 'late' ? 'late' : 'present';
+        finalStatus = 'present';
         deduction = 0;
+        
+        // Check if any session was late
+        const hasLateSession = sessions.some(s => s.status === 'late');
+        if (hasLateSession) {
+          finalStatus = 'late';
+        }
       }
     }
     
@@ -207,6 +313,37 @@ export async function processDailyAttendance() {
           user.id,
           `${deductionType} has been deducted from your leave balance due to ${finalStatus === 'unaccounted' ? 'unaccounted attendance' : 'half day'}.`
         );
+        
+        // Send email about leave deduction
+        try {
+          if (user.email) {
+            await sendEmail({
+              to: user.email,
+              subject: 'Leave Deduction Notice',
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <h2 style="color: #dc3545;">Leave Deduction Notice</h2>
+                  <p>Hi ${user.name},</p>
+                  <p>${deductionType} has been deducted from your leave balance.</p>
+                  
+                  <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+                    <p><strong>Date:</strong> ${today}</p>
+                    <p><strong>Reason:</strong> ${finalStatus === 'unaccounted' ? 'Unaccounted Attendance' : 'Half Day Worked'}</p>
+                    <p><strong>Hours Worked:</strong> ${totalHours.toFixed(1)} hours</p>
+                    <p><strong>Deduction:</strong> ${deductionType}</p>
+                  </div>
+                  
+                  <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+                  <p style="color: #999; font-size: 12px;">
+                    This is an automated notification from ForceFriction AI HR Portal.
+                  </p>
+                </div>
+              `,
+            });
+          }
+        } catch (emailError) {
+          console.error('Failed to send leave deduction email:', emailError);
+        }
         
       } else {
         // Not enough leave balance - mark as LOP
@@ -239,6 +376,36 @@ export async function processDailyAttendance() {
           user.id,
           `You have been marked as Loss of Pay (LOP) for today due to insufficient leave balance.`
         );
+        
+        // Send LOP email
+        try {
+          if (user.email) {
+            await sendEmail({
+              to: user.email,
+              subject: 'Loss of Pay (LOP) Notice',
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <h2 style="color: #dc3545;">Loss of Pay Notice</h2>
+                  <p>Hi ${user.name},</p>
+                  <p>You have been marked as Loss of Pay (LOP) for today.</p>
+                  
+                  <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+                    <p><strong>Date:</strong> ${today}</p>
+                    <p><strong>Hours Worked:</strong> ${totalHours.toFixed(1)} hours</p>
+                    <p><strong>Reason:</strong> Insufficient leave balance</p>
+                  </div>
+                  
+                  <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+                  <p style="color: #999; font-size: 12px;">
+                    This is an automated notification from ForceFriction AI HR Portal.
+                  </p>
+                </div>
+              `,
+            });
+          }
+        } catch (emailError) {
+          console.error('Failed to send LOP email:', emailError);
+        }
       }
       
       if (finalStatus === 'unaccounted') stats.unaccounted++;
@@ -377,6 +544,19 @@ export async function generateDailySummary() {
     SELECT COUNT(*) as count FROM attendance_exceptions WHERE status = 'pending'
   `).get() as { count: number };
   
+  // Get users with less than minimum hours
+  const usersWithLowHours = db.prepare(`
+    SELECT 
+      u.name,
+      u.email,
+      COALESCE(SUM(a.total_hours), 0) as total_hours
+    FROM users u
+    LEFT JOIN attendance a ON u.id = a.user_id AND a.date = ?
+    WHERE u.is_active = 1
+    GROUP BY u.id
+    HAVING total_hours < 8
+  `).all(today) as { name: string; email: string; total_hours: number }[];
+  
   const summary = {
     date: today,
     attendance: stats.reduce((acc, s) => ({ ...acc, [s.status]: s.count }), {}),
@@ -384,6 +564,8 @@ export async function generateDailySummary() {
       leaves: pendingLeaves.count,
       exceptions: pendingExceptions.count,
     },
+    usersWithLowHours: usersWithLowHours.length,
+    lowHoursDetails: usersWithLowHours,
   };
   
   console.log('[Daily Summary]', summary);

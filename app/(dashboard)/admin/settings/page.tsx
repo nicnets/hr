@@ -61,17 +61,11 @@ function EmailSettingsCard({
   const [testResult, setTestResult] = useState<{success: boolean; message: string} | null>(null);
 
   const authMethods = [
-    { value: 'app_password', label: 'App Password', icon: Key, description: 'Use app-specific password (Gmail, Outlook, etc.)' },
-    { value: 'oauth_google', label: 'Google OAuth 2.0', icon: Shield, description: 'Authenticate with Google account' },
-    { value: 'oauth_microsoft', label: 'Microsoft OAuth 2.0', icon: Shield, description: 'Authenticate with Microsoft/Outlook account' },
+    { value: 'app_password', label: 'SMTP Password', icon: Key, description: 'Use your SMTP2GO username and password' },
   ];
 
   const presetProviders = [
-    { name: 'Gmail (App Password)', host: 'smtp.gmail.com', port: 587, secure: false, authMethod: 'app_password' },
-    { name: 'Gmail (OAuth)', host: 'smtp.gmail.com', port: 587, secure: false, authMethod: 'oauth_google' },
-    { name: 'Microsoft 365 / Outlook', host: 'smtp.office365.com', port: 587, secure: false, authMethod: 'oauth_microsoft' },
-    { name: 'Outlook.com (App Password)', host: 'smtp-mail.outlook.com', port: 587, secure: false, authMethod: 'app_password' },
-    { name: 'Custom SMTP', host: '', port: 587, secure: false, authMethod: 'app_password' },
+    { name: 'SMTP2GO', host: 'mail.smtp2go.com', port: 2525, secure: false, authMethod: 'app_password' },
   ];
 
   async function testConnection() {
@@ -236,8 +230,7 @@ function EmailSettingsCard({
                     onChange={(e) => setConfig({ ...config, smtp_pass: e.target.value })}
                   />
                   <div className="text-sm text-muted-foreground space-y-1">
-                    <p><strong>For Gmail:</strong> Use an <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">App Password <ExternalLink className="h-3 w-3" /></a> (not your regular password)</p>
-                    <p><strong>For Microsoft/Outlook:</strong> Use an <a href="https://account.microsoft.com/security" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">App Password <ExternalLink className="h-3 w-3" /></a> or enable SMTP AUTH</p>
+                    <p>Use your SMTP2GO username and password from <a href="https://app.smtp2go.com/settings/smtp-users/" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">SMTP Users <ExternalLink className="h-3 w-3" /></a></p>
                   </div>
                 </div>
               </div>
@@ -552,7 +545,7 @@ export default function SettingsPage() {
                 onChange={(e) => setConfig({ ...config, shift_start_time: e.target.value })}
               />
               <p className="text-xs text-muted-foreground">
-                When the work day officially starts
+                Shift hours are 9:00 AM - 10:00 PM. Employees can clock in anytime during this window.
               </p>
             </div>
 
@@ -580,7 +573,7 @@ export default function SettingsPage() {
                 onChange={(e) => setConfig({ ...config, auto_clockout_time: e.target.value })}
               />
               <p className="text-xs text-muted-foreground">
-                Time to automatically clock out users
+                Time to automatically clock out users who haven't clocked out (default: 22:00)
               </p>
             </div>
           </CardContent>
@@ -637,6 +630,9 @@ export default function SettingsPage() {
                 <li>• {config.half_day_threshold} - {config.min_work_hours} hours = 0.5 day deducted</li>
                 <li>• {config.min_work_hours}+ hours = No deduction</li>
               </ul>
+              <p className="text-sm text-blue-600 mt-3">
+                <strong>Note:</strong> Employees can clock in/out multiple times per day for breaks. Total hours across all sessions count toward minimum requirement.
+              </p>
             </div>
           </CardContent>
         </Card>

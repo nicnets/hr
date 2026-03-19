@@ -1,9 +1,9 @@
 import { getServerSession } from 'next-auth/next';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { clockOut } from '@/lib/actions/attendance';
 import { authOptions } from '@/lib/auth';
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
     
@@ -11,8 +11,17 @@ export async function POST() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     
+    // Parse request body for isFinalCheckout flag
+    let isFinalCheckout = false;
+    try {
+      const body = await request.json();
+      isFinalCheckout = body.isFinalCheckout === true;
+    } catch {
+      // No body or invalid JSON, assume break clock-out
+    }
+    
     const userId = parseInt(session.user.id);
-    const result = await clockOut(userId);
+    const result = await clockOut(userId, isFinalCheckout);
     
     if (result.error) {
       return NextResponse.json({ error: result.error }, { status: 400 });

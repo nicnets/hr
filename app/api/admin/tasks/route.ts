@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth/next';
 import { NextRequest, NextResponse } from 'next/server';
 import { authOptions } from '@/lib/auth';
 import { getDb } from '@/lib/db';
+import { sendEmail, getTaskAssignmentEmail, getTaskReviewEmail, logEmail } from '@/lib/email';
 
 // GET /api/admin/tasks - List all tasks with filters
 export async function GET(request: NextRequest) {
@@ -110,6 +111,36 @@ export async function POST(request: Request) {
       '/tasks/assigned'
     );
     
+    // Send email notification
+    try {
+      const assignedUser = db.prepare('SELECT name, email FROM users WHERE id = ?').get(assigned_to) as { name: string; email: string } | undefined;
+      const adminUser = db.prepare('SELECT name FROM users WHERE id = ?').get(session.user.id) as { name: string } | undefined;
+      
+      if (assignedUser?.email) {
+        const emailSent = await sendEmail({
+          to: assignedUser.email,
+          subject: `New Task Assigned: ${title}`,
+          html: getTaskAssignmentEmail(
+            assignedUser.name,
+            title,
+            description,
+            due_date,
+            adminUser?.name || 'Admin'
+          ),
+        });
+        
+        await logEmail(
+          assigned_to,
+          'task_assigned',
+          `New Task Assigned: ${title}`,
+          emailSent ? 'sent' : 'failed'
+        );
+      }
+    } catch (emailError) {
+      console.error('Failed to send task assignment email:', emailError);
+      // Don't fail the request if email fails
+    }
+    
     // Create audit log
     db.prepare(`
       INSERT INTO audit_logs (user_id, action, entity_type, entity_id, new_values)
@@ -179,6 +210,34 @@ export async function PATCH(request: Request) {
         `Your task "${task.title}" has been ${newStatus === 'closed' ? 'approved' : 'rejected'}`,
         '/tasks/assigned'
       );
+      
+      // Send email notification
+      try {
+        const assignedUser = db.prepare('SELECT name, email FROM users WHERE id = ?').get(task.assigned_to) as { name: string; email: string } | undefined;
+        
+        if (assignedUser?.email) {
+          const emailSent = await sendEmail({
+            to: assignedUser.email,
+            subject: `Task ${newStatus === 'closed' ? 'Approved' : 'Rejected'}: ${task.title}`,
+            html: getTaskReviewEmail(
+              assignedUser.name,
+              task.title,
+              newStatus === 'closed' ? 'approved' : 'rejected',
+              review_notes
+            ),
+          });
+          
+          await logEmail(
+            task.assigned_to,
+            'task_reviewed',
+            `Task ${newStatus === 'closed' ? 'Approved' : 'Rejected'}: ${task.title}`,
+            emailSent ? 'sent' : 'failed'
+          );
+        }
+      } catch (emailError) {
+        console.error('Failed to send task review email:', emailError);
+        // Don't fail the request if email fails
+      }
       
       return NextResponse.json({ success: true, status: newStatus });
     }

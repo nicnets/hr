@@ -167,6 +167,11 @@ async function createTransport() {
         user: smtp_user,
         pass: config.smtp_pass,
       },
+      tls: {
+        // Allow connections even if there are certificate issues
+        // This is needed for some SMTP providers like SMTP2GO
+        rejectUnauthorized: false,
+      },
     });
   }
   
@@ -186,6 +191,9 @@ async function createTransport() {
       auth: {
         user: smtp_user,
         accessToken: accessToken,
+      },
+      tls: {
+        rejectUnauthorized: false,
       },
     });
   }
@@ -445,6 +453,77 @@ export function getAdminNotificationEmail(
           </a>
         </div>
       ` : ''}
+      
+      <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+      <p style="color: #999; font-size: 12px;">
+        This is an automated notification from ForceFriction AI HR Portal.
+      </p>
+    </div>
+  `;
+}
+
+// Task Assignment Email Template
+export function getTaskAssignmentEmail(
+  name: string,
+  title: string,
+  description: string,
+  dueDate: string | null,
+  assignedBy: string
+): string {
+  return `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #333;">New Task Assigned</h2>
+      <p>Hi ${name},</p>
+      <p>You have been assigned a new task by <strong>${assignedBy}</strong>.</p>
+      
+      <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+        <p><strong>Task:</strong> ${title}</p>
+        <p><strong>Description:</strong> ${description}</p>
+        ${dueDate ? `<p><strong>Due Date:</strong> ${dueDate}</p>` : ''}
+      </div>
+      
+      <div style="margin: 30px 0;">
+        <a href="${process.env.NEXTAUTH_URL}/tasks/assigned" 
+           style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
+          View Task
+        </a>
+      </div>
+      
+      <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+      <p style="color: #999; font-size: 12px;">
+        This is an automated notification from ForceFriction AI HR Portal.
+      </p>
+    </div>
+  `;
+}
+
+// Task Review Email Template
+export function getTaskReviewEmail(
+  name: string,
+  title: string,
+  status: 'approved' | 'rejected',
+  reviewNotes?: string
+): string {
+  const color = status === 'approved' ? '#28a745' : '#dc3545';
+  const statusText = status === 'approved' ? 'approved' : 'rejected';
+  
+  return `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: ${color};">Task ${statusText.charAt(0).toUpperCase() + statusText.slice(1)}</h2>
+      <p>Hi ${name},</p>
+      <p>Your task has been <strong style="color: ${color};">${statusText}</strong>.</p>
+      
+      <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+        <p><strong>Task:</strong> ${title}</p>
+        ${reviewNotes ? `<p><strong>Feedback:</strong> ${reviewNotes}</p>` : ''}
+      </div>
+      
+      <div style="margin: 30px 0;">
+        <a href="${process.env.NEXTAUTH_URL}/tasks/assigned" 
+           style="background-color: ${color}; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
+          View Task
+        </a>
+      </div>
       
       <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
       <p style="color: #999; font-size: 12px;">
