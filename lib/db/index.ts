@@ -1,9 +1,11 @@
 import Database from 'better-sqlite3';
 import { join } from 'path';
+import bcrypt from 'bcryptjs';
 
 const dbPath = process.env.DATABASE_URL?.replace('file:', '') || join(process.cwd(), 'data', 'hr-portal.db');
 
 let db: Database.Database | null = null;
+let initialized = false;
 
 export function getDb(): Database.Database {
   if (!db) {
@@ -14,14 +16,7 @@ export function getDb(): Database.Database {
   return db;
 }
 
-export function closeDb(): void {
-  if (db) {
-    db.close();
-    db = null;
-  }
-}
-
-// Initialize database with schema
+// Initialize database with schema and seed data
 export function initDb(): void {
   const database = getDb();
   
@@ -269,195 +264,31 @@ export function initDb(): void {
     `).run();
   }
 
-  // Assigned Tasks table for task management
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS assigned_tasks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL,
-      assigned_to INTEGER NOT NULL,
-      assigned_by INTEGER NOT NULL,
-      due_date DATE,
-      status TEXT CHECK(status IN ('assigned', 'in_progress', 'pending_review', 'closed', 'rejected')) DEFAULT 'assigned',
-      evidence_type TEXT CHECK(evidence_type IN ('link', 'attachment', 'none')) DEFAULT 'none',
-      evidence_url TEXT,
-      evidence_description TEXT,
-      submitted_at DATETIME,
-      reviewed_by INTEGER,
-      reviewed_at DATETIME,
-      review_notes TEXT,
-      auto_approve BOOLEAN DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL
-    )
-  `);
-
-  // Task types for auto-approval configuration
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS task_types (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE NOT NULL,
-      description TEXT,
-      auto_approve BOOLEAN DEFAULT 0,
-      is_active BOOLEAN DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  // Insert default task types if none exist
-  const existingTaskTypes = database.prepare('SELECT COUNT(*) as count FROM task_types').get() as { count: number };
-  if (existingTaskTypes.count === 0) {
-    const defaultTaskTypes = [
-      { name: 'Daily Standup', description: 'Daily team standup participation', auto_approve: 1 },
-      { name: 'Documentation', description: 'Internal documentation tasks', auto_approve: 0 },
-      { name: 'Client Work', description: 'Client-facing project work', auto_approve: 0 },
-      { name: 'Training', description: 'Training and skill development', auto_approve: 1 },
-      { name: 'Admin Tasks', description: 'Administrative tasks', auto_approve: 1 },
-    ];
+  // Seed admin user if not exists
+  const existingAdmin = database.prepare('SELECT id FROM users WHERE email = ?').get('admin@forcefriction.ai');
+  if (!existingAdmin) {
+    const passwordHash = bcrypt.hashSync('admin123', 10);
+    const adminResult = database.prepare(`
+      INSERT INTO users (email, name, role, password_hash, department, joining_date, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('admin@forcefriction.ai', 'System Administrator', 'admin', passwordHash, 'HR', '2024-01-01', 1);
     
-    const insertTaskType = database.prepare(`
-      INSERT INTO task_types (name, description, auto_approve)
-      VALUES (?, ?, ?)
-    `);
+    // Create leave balance for admin
+    const currentYear = new Date().getFullYear();
+    database.prepare(`
+      INSERT INTO leave_balances (user_id, year, total_leaves, used_leaves, lop_days)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(adminResult.lastInsertRowid, currentYear, 20, 0, 0);
     
-    for (const type of defaultTaskTypes) {
-      insertTaskType.run(type.name, type.description, type.auto_approve);
-    }
+    console.log('Admin user created: admin@forcefriction.ai / admin123');
   }
+}
 
-  // Recurring task templates (for daily/weekly/monthly tasks)
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS recurring_task_templates (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL,
-      recurrence_type TEXT CHECK(recurrence_type IN ('daily', 'weekly', 'monthly')) NOT NULL,
-      due_time TEXT, -- For daily: HH:MM format (e.g., '23:00')
-      due_day INTEGER, -- For weekly: 0=Sun, 1=Mon, ..., 6=Sat; For monthly: 1-31
-      project_id INTEGER,
-      assigned_to INTEGER,
-      is_active BOOLEAN DEFAULT 1,
-      last_assigned_date DATE,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
-      FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
-    )
-  `);
-
-  // Task picker pool (admin created tasks employees can pick)
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS task_picker_pool (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL,
-      project_id INTEGER,
-      estimated_hours REAL,
-      difficulty_level TEXT CHECK(difficulty_level IN ('Very Easy', 'Easy', 'Moderate', 'Difficult', 'Very Difficult')),
-      required_skills TEXT, -- JSON array
-      is_active BOOLEAN DEFAULT 1,
-      picked_by INTEGER,
-      picked_at DATETIME,
-      completed_at DATETIME,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
-      FOREIGN KEY (picked_by) REFERENCES users(id) ON DELETE SET NULL
-    )
-  `);
-
-  // Task submission details (employee responses when closing tasks)
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS task_submissions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id INTEGER NOT NULL,
-      user_id INTEGER NOT NULL,
-      work_summary TEXT NOT NULL, -- min 40 words
-      task_objective TEXT NOT NULL,
-      final_outcome TEXT NOT NULL,
-      scope_change TEXT CHECK(scope_change IN ('No change', 'Minor change', 'Moderate change', 'Major change')) NOT NULL,
-      output_type TEXT CHECK(output_type IN ('Document / Report', 'Graphic / Design', 'Website Update', 'Code / Script', 'Data / Spreadsheet', 'Presentation', 'Communication (Email / Message)', 'Process / Policy Update', 'Research Findings', 'Article Preparation', 'Course Preparation', 'Other')) NOT NULL,
-      output_description TEXT NOT NULL,
-      time_spent TEXT CHECK(time_spent IN ('Less than 30 minutes', '30 minutes – 1 hour', '1–2 hours', '2–4 hours', '4–8 hours', '1 day')) NOT NULL,
-      difficulty_level TEXT CHECK(difficulty_level IN ('Very Easy', 'Easy', 'Moderate', 'Difficult', 'Very Difficult')) NOT NULL,
-      confidence_level TEXT CHECK(confidence_level IN ('Very confident', 'Confident', 'Somewhat confident', 'Not confident')) NOT NULL,
-      submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (task_id) REFERENCES assigned_tasks(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-
-  // AI Analysis results
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS task_ai_analysis (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id INTEGER NOT NULL,
-      submission_id INTEGER NOT NULL,
-      user_id INTEGER NOT NULL,
-      score INTEGER NOT NULL, -- 0-100
-      task_understanding INTEGER, -- 0-25
-      work_authenticity INTEGER, -- 0-20
-      output_validity INTEGER, -- 0-25
-      effort_reasonableness INTEGER, -- 0-20
-      difficulty_consistency INTEGER, -- 0-10
-      risk_flags TEXT, -- JSON array
-      decision TEXT CHECK(decision IN ('approved', 'needs_review', 'rejected')) NOT NULL,
-      analysis_summary TEXT,
-      analyzed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      notification_sent BOOLEAN DEFAULT 0,
-      FOREIGN KEY (task_id) REFERENCES assigned_tasks(id) ON DELETE CASCADE,
-      FOREIGN KEY (submission_id) REFERENCES task_submissions(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-
-  // AI Configuration settings
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS ai_config (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      api_key TEXT,
-      model_name TEXT DEFAULT 'gpt-4o-mini',
-      is_enabled BOOLEAN DEFAULT 0,
-      test_status TEXT,
-      test_message TEXT,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  // Task clock-in link tracking
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS task_clockin_links (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id INTEGER,
-      task_log_id INTEGER,
-      user_id INTEGER NOT NULL,
-      date DATE NOT NULL,
-      attendance_id INTEGER,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (task_id) REFERENCES assigned_tasks(id) ON DELETE CASCADE,
-      FOREIGN KEY (task_log_id) REFERENCES task_logs(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (attendance_id) REFERENCES attendance(id) ON DELETE SET NULL
-    )
-  `);
-
-  // Partial clock-in violation tracking
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS attendance_violations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      date DATE NOT NULL,
-      violation_type TEXT CHECK(violation_type IN ('no_task_submitted', 'task_rejected', 'hours_mismatch')) NOT NULL,
-      email_count INTEGER DEFAULT 0,
-      leave_deducted BOOLEAN DEFAULT 0,
-      deduction_hours REAL DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      resolved_at DATETIME,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
+export function closeDb(): void {
+  if (db) {
+    db.close();
+    db = null;
+  }
 }
 
 // Run migrations
