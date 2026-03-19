@@ -1,23 +1,26 @@
 version: '3.8'
 
+# This version is for Portainer Web Editor (not GitOps)
+# It builds the image locally instead of pulling from registry
+# Use this if you don't want to use GHCR
+
 services:
   app:
-    image: ghcr.io/nicnets/hr:latest
+    build:
+      context: https://github.com/nicnets/hr.git#main
+      dockerfile: Dockerfile
     container_name: hr-portal
     restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
-      # Required
       - NODE_ENV=production
       - DATABASE_URL=file:./data/hr-portal.db
       - NEXTAUTH_URL=${NEXTAUTH_URL}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
-      # Optional
       - COMPANY_NAME=${COMPANY_NAME:-ForceFriction AI}
       - CRON_SECRET=${CRON_SECRET}
     volumes:
-      # Use named volumes for Portainer (better persistence)
       - hr-portal-data:/app/data
       - hr-portal-backups:/app/backups
     networks:
@@ -35,6 +38,4 @@ networks:
 
 volumes:
   hr-portal-data:
-    driver: local
   hr-portal-backups:
-    driver: local
