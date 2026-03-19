@@ -5,7 +5,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: hr-portal-app:latest
     container_name: hr-portal
     restart: unless-stopped
     ports:
