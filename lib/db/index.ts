@@ -15,12 +15,25 @@ export function getDb(): Database.Database {
     
     // Initialize database on first connection
     if (!initialized) {
-      initDb();
-      runMigrations();
-      initialized = true;
+      try {
+        initDb();
+        initialized = true;
+        console.log('Database initialized successfully');
+      } catch (error) {
+        console.error('Database initialization error:', error);
+        throw error;
+      }
     }
   }
   return db;
+}
+
+export function closeDb(): void {
+  if (db) {
+    db.close();
+    db = null;
+    initialized = false;
+  }
 }
 
 // Initialize database with schema and seed data
@@ -94,7 +107,6 @@ export function initDb(): void {
       hours_spent REAL GENERATED ALWAYS AS (
         ROUND((julianday(end_time) - julianday(start_time)) * 24, 2)
       ) STORED,
-      -- AI analysis fields for employee-logged tasks
       work_summary TEXT,
       task_objective TEXT,
       final_outcome TEXT,
@@ -173,6 +185,13 @@ export function initDb(): void {
       smtp_user TEXT,
       smtp_pass TEXT,
       smtp_from TEXT,
+      smtp_auth_method TEXT DEFAULT 'app_password' CHECK(smtp_auth_method IN ('app_password', 'oauth_google', 'oauth_microsoft')),
+      smtp_oauth_client_id TEXT,
+      smtp_oauth_client_secret TEXT,
+      smtp_oauth_refresh_token TEXT,
+      smtp_oauth_access_token TEXT,
+      smtp_oauth_token_expiry DATETIME,
+      smtp_secure BOOLEAN DEFAULT 0,
       email_notifications_enabled BOOLEAN DEFAULT 0
     )
   `);
@@ -235,6 +254,193 @@ export function initDb(): void {
     )
   `);
 
+  // Assigned Tasks table for task management
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS assigned_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      assigned_to INTEGER NOT NULL,
+      assigned_by INTEGER NOT NULL,
+      due_date DATE,
+      status TEXT CHECK(status IN ('assigned', 'in_progress', 'pending_review', 'closed', 'rejected')) DEFAULT 'assigned',
+      evidence_type TEXT CHECK(evidence_type IN ('link', 'attachment', 'none')) DEFAULT 'none',
+      evidence_url TEXT,
+      evidence_description TEXT,
+      submitted_at DATETIME,
+      reviewed_by INTEGER,
+      reviewed_at DATETIME,
+      review_notes TEXT,
+      auto_approve BOOLEAN DEFAULT 0,
+      recurrence_type TEXT CHECK(recurrence_type IN ('daily', 'weekly', 'monthly', 'adhoc')) DEFAULT 'adhoc',
+      parent_template_id INTEGER,
+      project_id INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    )
+  `);
+
+  // Task types for auto-approval configuration
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS task_types (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      description TEXT,
+      auto_approve BOOLEAN DEFAULT 0,
+      is_active BOOLEAN DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Recurring task templates
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS recurring_task_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      recurrence_type TEXT CHECK(recurrence_type IN ('daily', 'weekly', 'monthly')) NOT NULL,
+      due_time TEXT,
+      due_day INTEGER,
+      project_id INTEGER,
+      assigned_to INTEGER,
+      is_active BOOLEAN DEFAULT 1,
+      last_assigned_date DATE,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
+      FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
+  // Task picker pool
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS task_picker_pool (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      project_id INTEGER,
+      estimated_hours REAL,
+      difficulty_level TEXT CHECK(difficulty_level IN ('Very Easy', 'Easy', 'Moderate', 'Difficult', 'Very Difficult')),
+      required_skills TEXT,
+      is_active BOOLEAN DEFAULT 1,
+      picked_by INTEGER,
+      picked_at DATETIME,
+      completed_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
+      FOREIGN KEY (picked_by) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
+  // Task submission details
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS task_submissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      work_summary TEXT NOT NULL,
+      task_objective TEXT NOT NULL,
+      final_outcome TEXT NOT NULL,
+      scope_change TEXT CHECK(scope_change IN ('No change', 'Minor change', 'Moderate change', 'Major change')) NOT NULL,
+      output_type TEXT CHECK(output_type IN ('Document / Report', 'Graphic / Design', 'Website Update', 'Code / Script', 'Data / Spreadsheet', 'Presentation', 'Communication (Email / Message)', 'Process / Policy Update', 'Research Findings', 'Article Preparation', 'Course Preparation', 'Other')) NOT NULL,
+      output_description TEXT NOT NULL,
+      time_spent TEXT CHECK(time_spent IN ('Less than 30 minutes', '30 minutes – 1 hour', '1–2 hours', '2–4 hours', '4–8 hours', '1 day')) NOT NULL,
+      difficulty_level TEXT CHECK(difficulty_level IN ('Very Easy', 'Easy', 'Moderate', 'Difficult', 'Very Difficult')) NOT NULL,
+      confidence_level TEXT CHECK(confidence_level IN ('Very confident', 'Confident', 'Somewhat confident', 'Not confident')) NOT NULL,
+      submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (task_id) REFERENCES assigned_tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  // AI Analysis results
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS task_ai_analysis (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL,
+      submission_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      score INTEGER NOT NULL,
+      task_understanding INTEGER,
+      work_authenticity INTEGER,
+      output_validity INTEGER,
+      effort_reasonableness INTEGER,
+      difficulty_consistency INTEGER,
+      risk_flags TEXT,
+      decision TEXT CHECK(decision IN ('approved', 'needs_review', 'rejected')) NOT NULL,
+      analysis_summary TEXT,
+      analyzed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      notification_sent BOOLEAN DEFAULT 0,
+      FOREIGN KEY (task_id) REFERENCES assigned_tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (submission_id) REFERENCES task_submissions(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  // AI Configuration settings
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS ai_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      api_key TEXT,
+      model_name TEXT DEFAULT 'gpt-4o-mini',
+      is_enabled BOOLEAN DEFAULT 0,
+      test_status TEXT,
+      test_message TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Task clock-in link tracking
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS task_clockin_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER,
+      task_log_id INTEGER,
+      user_id INTEGER NOT NULL,
+      date DATE NOT NULL,
+      attendance_id INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (task_id) REFERENCES assigned_tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (task_log_id) REFERENCES task_logs(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (attendance_id) REFERENCES attendance(id) ON DELETE SET NULL
+    )
+  `);
+
+  // Partial clock-in violation tracking
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS attendance_violations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      date DATE NOT NULL,
+      violation_type TEXT CHECK(violation_type IN ('no_task_submitted', 'task_rejected', 'hours_mismatch')) NOT NULL,
+      email_count INTEGER DEFAULT 0,
+      leave_deducted BOOLEAN DEFAULT 0,
+      deduction_hours REAL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      resolved_at DATETIME,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Migrations tracking table
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS migrations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      executed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Seed default data
+  seedDefaultData(database);
+}
+
+function seedDefaultData(database: Database.Database): void {
   // Insert default projects if none exist
   const existingProjects = database.prepare('SELECT COUNT(*) as count FROM projects').get() as { count: number };
   if (existingProjects.count === 0) {
@@ -259,6 +465,7 @@ export function initDb(): void {
     for (const project of defaultProjects) {
       insertProject.run(project.name, project.description, project.is_internal);
     }
+    console.log('Default projects created');
   }
 
   // Insert default config if not exists
@@ -269,6 +476,29 @@ export function initDb(): void {
         min_work_hours, half_day_threshold, working_days, company_name)
       VALUES (1, '09:00', 15, '18:00', 8.0, 4.0, '1,2,3,4,5', 'ForceFriction AI')
     `).run();
+    console.log('Default system config created');
+  }
+
+  // Insert default task types if none exist
+  const existingTaskTypes = database.prepare('SELECT COUNT(*) as count FROM task_types').get() as { count: number };
+  if (existingTaskTypes.count === 0) {
+    const defaultTaskTypes = [
+      { name: 'Daily Standup', description: 'Daily team standup participation', auto_approve: 1 },
+      { name: 'Documentation', description: 'Internal documentation tasks', auto_approve: 0 },
+      { name: 'Client Work', description: 'Client-facing project work', auto_approve: 0 },
+      { name: 'Training', description: 'Training and skill development', auto_approve: 1 },
+      { name: 'Admin Tasks', description: 'Administrative tasks', auto_approve: 1 },
+    ];
+    
+    const insertTaskType = database.prepare(`
+      INSERT INTO task_types (name, description, auto_approve)
+      VALUES (?, ?, ?)
+    `);
+    
+    for (const type of defaultTaskTypes) {
+      insertTaskType.run(type.name, type.description, type.auto_approve);
+    }
+    console.log('Default task types created');
   }
 
   // Seed admin user if not exists
@@ -289,92 +519,22 @@ export function initDb(): void {
     
     console.log('Admin user created: admin@forcefriction.ai / admin123');
   }
-}
 
-export function closeDb(): void {
-  if (db) {
-    db.close();
-    db = null;
+  // Insert default AI config if not exists
+  const existingAiConfig = database.prepare('SELECT id FROM ai_config WHERE id = 1').get();
+  if (!existingAiConfig) {
+    database.prepare(`
+      INSERT INTO ai_config (id, model_name, is_enabled)
+      VALUES (1, 'gpt-4o-mini', 0)
+    `).run();
+    console.log('Default AI config created');
   }
 }
 
-// Run migrations
-export function runMigrations(): void {
+// Add indexes for performance
+export function addIndexes(): void {
   const database = getDb();
   
-  // Create migrations tracking table
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS migrations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE NOT NULL,
-      executed_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-  
-  // Migration: Create assigned_tasks table (for existing databases)
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS assigned_tasks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL,
-      assigned_to INTEGER NOT NULL,
-      assigned_by INTEGER NOT NULL,
-      due_date DATE,
-      status TEXT CHECK(status IN ('assigned', 'in_progress', 'pending_review', 'closed', 'rejected')) DEFAULT 'assigned',
-      evidence_type TEXT CHECK(evidence_type IN ('link', 'attachment', 'none')) DEFAULT 'none',
-      evidence_url TEXT,
-      evidence_description TEXT,
-      submitted_at DATETIME,
-      reviewed_by INTEGER,
-      reviewed_at DATETIME,
-      review_notes TEXT,
-      auto_approve BOOLEAN DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL
-    )
-  `);
-  
-  // Migration: Create task_types table (for existing databases)
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS task_types (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE NOT NULL,
-      description TEXT,
-      auto_approve BOOLEAN DEFAULT 0,
-      is_active BOOLEAN DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-  
-  // Insert default task types if none exist
-  try {
-    const existingTaskTypes = database.prepare('SELECT COUNT(*) as count FROM task_types').get() as { count: number };
-    if (existingTaskTypes.count === 0) {
-      const defaultTaskTypes = [
-        { name: 'Daily Standup', description: 'Daily team standup participation', auto_approve: 1 },
-        { name: 'Documentation', description: 'Internal documentation tasks', auto_approve: 0 },
-        { name: 'Client Work', description: 'Client-facing project work', auto_approve: 0 },
-        { name: 'Training', description: 'Training and skill development', auto_approve: 1 },
-        { name: 'Admin Tasks', description: 'Administrative tasks', auto_approve: 1 },
-      ];
-      
-      const insertTaskType = database.prepare(`
-        INSERT INTO task_types (name, description, auto_approve)
-        VALUES (?, ?, ?)
-      `);
-      
-      for (const type of defaultTaskTypes) {
-        insertTaskType.run(type.name, type.description, type.auto_approve);
-      }
-    }
-  } catch {
-    // Ignore errors
-  }
-  
-  // Add indexes for performance
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_attendance_user_date ON attendance(user_id, date)',
     'CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date)',
@@ -394,248 +554,14 @@ export function runMigrations(): void {
     'CREATE INDEX IF NOT EXISTS idx_recurring_templates_active ON recurring_task_templates(is_active)',
     'CREATE INDEX IF NOT EXISTS idx_task_picker_pool_active ON task_picker_pool(is_active)',
     'CREATE INDEX IF NOT EXISTS idx_attendance_violations_user ON attendance_violations(user_id, date)',
+    'CREATE INDEX IF NOT EXISTS idx_task_logs_ai_analyzed ON task_logs(ai_analyzed)',
   ];
   
-  indexes.forEach(index => {
-    database.exec(index);
-  });
-  
-  // Migration: Add logo_url column to system_config if not exists
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN logo_url TEXT`);
-  } catch {
-    // Column already exists, ignore error
+  for (const index of indexes) {
+    try {
+      database.exec(index);
+    } catch (error) {
+      console.error('Failed to create index:', index, error);
+    }
   }
-
-  // Migration: Create recurring_task_templates table
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS recurring_task_templates (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL,
-      recurrence_type TEXT CHECK(recurrence_type IN ('daily', 'weekly', 'monthly')) NOT NULL,
-      due_time TEXT,
-      due_day INTEGER,
-      project_id INTEGER,
-      assigned_to INTEGER,
-      is_active BOOLEAN DEFAULT 1,
-      last_assigned_date DATE,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
-      FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
-    )
-  `);
-
-  // Migration: Create task_picker_pool table
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS task_picker_pool (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL,
-      project_id INTEGER,
-      estimated_hours REAL,
-      difficulty_level TEXT CHECK(difficulty_level IN ('Very Easy', 'Easy', 'Moderate', 'Difficult', 'Very Difficult')),
-      required_skills TEXT,
-      is_active BOOLEAN DEFAULT 1,
-      picked_by INTEGER,
-      picked_at DATETIME,
-      completed_at DATETIME,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
-      FOREIGN KEY (picked_by) REFERENCES users(id) ON DELETE SET NULL
-    )
-  `);
-
-  // Migration: Create task_submissions table
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS task_submissions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id INTEGER NOT NULL,
-      user_id INTEGER NOT NULL,
-      work_summary TEXT NOT NULL,
-      task_objective TEXT NOT NULL,
-      final_outcome TEXT NOT NULL,
-      scope_change TEXT CHECK(scope_change IN ('No change', 'Minor change', 'Moderate change', 'Major change')) NOT NULL,
-      output_type TEXT CHECK(output_type IN ('Document / Report', 'Graphic / Design', 'Website Update', 'Code / Script', 'Data / Spreadsheet', 'Presentation', 'Communication (Email / Message)', 'Process / Policy Update', 'Research Findings', 'Article Preparation', 'Course Preparation', 'Other')) NOT NULL,
-      output_description TEXT NOT NULL,
-      time_spent TEXT CHECK(time_spent IN ('Less than 30 minutes', '30 minutes – 1 hour', '1–2 hours', '2–4 hours', '4–8 hours', '1 day')) NOT NULL,
-      difficulty_level TEXT CHECK(difficulty_level IN ('Very Easy', 'Easy', 'Moderate', 'Difficult', 'Very Difficult')) NOT NULL,
-      confidence_level TEXT CHECK(confidence_level IN ('Very confident', 'Confident', 'Somewhat confident', 'Not confident')) NOT NULL,
-      submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (task_id) REFERENCES assigned_tasks(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-
-  // Migration: Create task_ai_analysis table
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS task_ai_analysis (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id INTEGER NOT NULL,
-      submission_id INTEGER NOT NULL,
-      user_id INTEGER NOT NULL,
-      score INTEGER NOT NULL,
-      task_understanding INTEGER,
-      work_authenticity INTEGER,
-      output_validity INTEGER,
-      effort_reasonableness INTEGER,
-      difficulty_consistency INTEGER,
-      risk_flags TEXT,
-      decision TEXT CHECK(decision IN ('approved', 'needs_review', 'rejected')) NOT NULL,
-      analysis_summary TEXT,
-      analyzed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      notification_sent BOOLEAN DEFAULT 0,
-      FOREIGN KEY (task_id) REFERENCES assigned_tasks(id) ON DELETE CASCADE,
-      FOREIGN KEY (submission_id) REFERENCES task_submissions(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-
-  // Migration: Create ai_config table
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS ai_config (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      api_key TEXT,
-      model_name TEXT DEFAULT 'gpt-4o-mini',
-      is_enabled BOOLEAN DEFAULT 0,
-      test_status TEXT,
-      test_message TEXT,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  // Migration: Create task_clockin_links table
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS task_clockin_links (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id INTEGER,
-      task_log_id INTEGER,
-      user_id INTEGER NOT NULL,
-      date DATE NOT NULL,
-      attendance_id INTEGER,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (task_id) REFERENCES assigned_tasks(id) ON DELETE CASCADE,
-      FOREIGN KEY (task_log_id) REFERENCES task_logs(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (attendance_id) REFERENCES attendance(id) ON DELETE SET NULL
-    )
-  `);
-
-  // Migration: Create attendance_violations table
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS attendance_violations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      date DATE NOT NULL,
-      violation_type TEXT CHECK(violation_type IN ('no_task_submitted', 'task_rejected', 'hours_mismatch')) NOT NULL,
-      email_count INTEGER DEFAULT 0,
-      leave_deducted BOOLEAN DEFAULT 0,
-      deduction_hours REAL DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      resolved_at DATETIME,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-
-  // Migration: Add recurrence fields to assigned_tasks if not exists
-  try {
-    database.exec(`ALTER TABLE assigned_tasks ADD COLUMN recurrence_type TEXT CHECK(recurrence_type IN ('daily', 'weekly', 'monthly', 'adhoc')) DEFAULT 'adhoc'`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE assigned_tasks ADD COLUMN parent_template_id INTEGER`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE assigned_tasks ADD COLUMN project_id INTEGER`);
-  } catch {}
-
-  // Migration: Add email settings columns to system_config
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN smtp_host TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN smtp_port INTEGER DEFAULT 587`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN smtp_user TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN smtp_pass TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN smtp_from TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN email_notifications_enabled BOOLEAN DEFAULT 0`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN smtp_auth_method TEXT DEFAULT 'app_password' CHECK(smtp_auth_method IN ('app_password', 'oauth_google', 'oauth_microsoft'))`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN smtp_oauth_client_id TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN smtp_oauth_client_secret TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN smtp_oauth_refresh_token TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN smtp_oauth_access_token TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN smtp_oauth_token_expiry DATETIME`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE system_config ADD COLUMN smtp_secure BOOLEAN DEFAULT 0`);
-  } catch {}
-
-  // Migration: Add AI analysis fields to task_logs
-  try {
-    database.exec(`ALTER TABLE task_logs ADD COLUMN work_summary TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE task_logs ADD COLUMN task_objective TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE task_logs ADD COLUMN final_outcome TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE task_logs ADD COLUMN scope_change TEXT CHECK(scope_change IN ('No change', 'Minor change', 'Moderate change', 'Major change'))`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE task_logs ADD COLUMN output_type TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE task_logs ADD COLUMN output_description TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE task_logs ADD COLUMN difficulty_level TEXT CHECK(difficulty_level IN ('Very Easy', 'Easy', 'Moderate', 'Difficult', 'Very Difficult'))`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE task_logs ADD COLUMN confidence_level TEXT CHECK(confidence_level IN ('Very confident', 'Confident', 'Somewhat confident', 'Not confident'))`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE task_logs ADD COLUMN ai_analyzed BOOLEAN DEFAULT 0`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE task_logs ADD COLUMN ai_score INTEGER`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE task_logs ADD COLUMN ai_decision TEXT CHECK(ai_decision IN ('approved', 'needs_review', 'rejected'))`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE task_logs ADD COLUMN ai_analysis_summary TEXT`);
-  } catch {}
-  try {
-    database.exec(`ALTER TABLE task_logs ADD COLUMN ai_analyzed_at DATETIME`);
-  } catch {}
-
-  // Migration: Add indexes for task_logs AI fields
-  try {
-    database.exec(`CREATE INDEX IF NOT EXISTS idx_task_logs_ai_analyzed ON task_logs(ai_analyzed)`);
-  } catch {}
-  try {
-    database.exec(`CREATE INDEX IF NOT EXISTS idx_task_logs_user_date ON task_logs(user_id, date)`);
-  } catch {}
 }
